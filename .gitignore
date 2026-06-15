@@ -5,4 +5,3 @@ __pycache__/
 mmr.sqlite3
 mmr.sqlite3-shm
 mmr.sqlite3-wal
-ranking.json
