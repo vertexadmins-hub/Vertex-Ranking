@@ -154,6 +154,8 @@ logger = logging.getLogger("mmr_bot")
 def exportar_ranking():
     try:
         with get_connection() as connection:
+            # Keeps old SQLite installs compatible if a legacy players table exists.
+            migrate_legacy_data(connection)
             players = connection.execute(
                 """
                 SELECT username, current_mmr, wins, losses, winrate
@@ -179,11 +181,23 @@ def exportar_ranking():
         with open(RANKING_JSON_PATH, "w", encoding="utf-8") as f:
             f.write(contenido)
 
-        subir_ranking_a_github(contenido)
-        exportar_datos_vertex()
+        ranking_uploaded = subir_ranking_a_github(contenido)
+        vertex_uploaded = exportar_datos_vertex()
+        return {
+            "ok": True,
+            "count": len(data),
+            "ranking_uploaded": ranking_uploaded,
+            "vertex_uploaded": vertex_uploaded,
+        }
 
     except Exception as e:
         logger.warning("Could not export ranking.json: %s", e)
+        return {
+            "ok": False,
+            "count": 0,
+            "ranking_uploaded": False,
+            "vertex_uploaded": False,
+        }
 
 
 # ─────────────────────────────────────────
@@ -195,7 +209,7 @@ def subir_archivo_a_github(github_file_path: str, contenido: str, message: str):
             "GITHUB_TOKEN o GITHUB_REPO no configurados; no se sube %s a GitHub",
             github_file_path,
         )
-        return
+        return False
 
     api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{github_file_path}"
     headers = {
@@ -221,7 +235,7 @@ def subir_archivo_a_github(github_file_path: str, contenido: str, message: str):
                 "No se pudo obtener %s de GitHub (status %s): %s",
                 github_file_path, get_resp.status_code, get_resp.text,
             )
-            return
+            return False
 
         contenido_b64 = base64.b64encode(contenido.encode("utf-8")).decode("utf-8")
 
@@ -246,23 +260,26 @@ def subir_archivo_a_github(github_file_path: str, contenido: str, message: str):
                 "No se pudo subir %s a GitHub (status %s): %s",
                 github_file_path, put_resp.status_code, put_resp.text,
             )
+            return False
         else:
             logger.info(
                 "%s actualizado en GitHub (%s).",
                 github_file_path,
                 GITHUB_BRANCH,
             )
+            return True
 
     except requests.RequestException as e:
         logger.warning("Error de red al subir %s a GitHub: %s", github_file_path, e)
+        return False
 
 
 def subir_ranking_a_github(contenido: str):
-    subir_archivo_a_github(GITHUB_FILE_PATH, contenido, "update ranking.json")
+    return subir_archivo_a_github(GITHUB_FILE_PATH, contenido, "update ranking.json")
 
 
 def subir_datos_vertex_a_github(contenido: str):
-    subir_archivo_a_github(
+    return subir_archivo_a_github(
         GITHUB_VERTEX_DATA_FILE_PATH,
         contenido,
         "update vertex-data.json",
@@ -933,6 +950,7 @@ def reset_season(actor, idempotency_key=None):
 
     with get_connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
+        migrate_legacy_data(connection)
 
         if idempotency_key:
             duplicate = connection.execute(
@@ -944,13 +962,21 @@ def reset_season(actor, idempotency_key=None):
 
         users = connection.execute("SELECT user_id, username, current_mmr FROM users").fetchall()
 
+        # A season reset starts a clean competitive season. Admin audit logs stay,
+        # but match records and match-based MMR changes are removed.
+        connection.execute("DELETE FROM mmr_changes WHERE match_id IS NOT NULL")
+        connection.execute("DELETE FROM match_participants")
+        connection.execute("DELETE FROM match_history")
+        if table_exists(connection, "matches"):
+            connection.execute("DELETE FROM matches")
+
         connection.execute(
             """
             INSERT INTO admin_actions (action_id, actor_id, action_type, source_type,
                 amount_changed, reason, idempotency_key)
             VALUES (?, ?, 'resetseason', 'admin', 0, ?, ?)
             """,
-            (action_id, actor.id, "Season reset; match history preserved.", idempotency_key),
+            (action_id, actor.id, "Season reset; match history cleared.", idempotency_key),
         )
 
         for user in users:
@@ -967,6 +993,15 @@ def reset_season(actor, idempotency_key=None):
             save_mmr_change(connection, user_id=user["user_id"], admin_action_id=action_id,
                 change_type="admin", previous_mmr=user["current_mmr"],
                 amount_changed=amount_changed, new_mmr=INITIAL_MMR)
+
+        if table_exists(connection, "players"):
+            connection.execute(
+                """
+                UPDATE players
+                SET mmr = ?, wins = 0, losses = 0
+                """,
+                (INITIAL_MMR,),
+            )
 
         return len(users)
 
@@ -1264,9 +1299,10 @@ def exportar_datos_vertex():
         contenido = json.dumps(data, ensure_ascii=False, indent=2)
         with open(VERTEX_DATA_JSON_PATH, "w", encoding="utf-8") as f:
             f.write(contenido)
-        subir_datos_vertex_a_github(contenido)
+        return subir_datos_vertex_a_github(contenido)
     except Exception as error:
         logger.warning("Could not export vertex-data.json: %s", error)
+        return False
 
 
 def format_entity_summary(entity):
@@ -1323,7 +1359,10 @@ def discord_idempotency_key(prefix, ctx):
 @bot.event
 async def on_ready():
     print(f"Bot connected as {bot.user}")
-    exportar_ranking()
+    logger.info("Using SQLite database at %s", DATABASE_PATH)
+    result = exportar_ranking()
+    if result["ok"]:
+        logger.info("Web data exported on startup: %s players.", result["count"])
 
 
 @bot.command()
@@ -1336,8 +1375,21 @@ async def ping(ctx):
 @commands.guild_only()
 @commands.has_guild_permissions(manage_guild=True)
 async def syncweb(ctx):
-    exportar_ranking()
-    await ctx.send("Web sync complete. `ranking.json` and `vertex-data.json` were regenerated.")
+    result = exportar_ranking()
+    if not result["ok"]:
+        await ctx.send("Web sync failed. Check the bot console logs.")
+        return
+
+    if result["ranking_uploaded"] and result["vertex_uploaded"]:
+        await ctx.send(
+            "Web sync complete. "
+            f"**{result['count']} players** were exported to `ranking.json` and `vertex-data.json`."
+        )
+    else:
+        await ctx.send(
+            "Local JSON files were regenerated, but GitHub upload failed. "
+            "Check `GITHUB_TOKEN`, `GITHUB_REPO`, and the bot console logs."
+        )
 
 
 @bot.command()
@@ -1452,12 +1504,20 @@ async def victoria(ctx, winner: discord.Member, loser: discord.Member):
 @commands.has_guild_permissions(manage_guild=True)
 async def resetseason(ctx):
     player_count = reset_season(ctx.author, idempotency_key=discord_idempotency_key("resetseason", ctx))
+    await sync_all_mmr_roles(ctx.guild)
+    result = exportar_ranking()
+
+    sync_status = "Web sync complete."
+    if not result["ok"]:
+        sync_status = "Web sync failed. Check the bot console logs."
+    elif not (result["ranking_uploaded"] and result["vertex_uploaded"]):
+        sync_status = "Local JSON files were regenerated, but GitHub upload failed."
+
     await ctx.send(
         f"Season reset complete. **{player_count} players** were reset to "
-        f"**{INITIAL_MMR} MMR** with 0 wins and 0 losses. Match history was preserved."
+        f"**{INITIAL_MMR} MMR** with 0 wins and 0 losses. Match history was cleared. "
+        f"{sync_status}"
     )
-    await sync_all_mmr_roles(ctx.guild)
-    exportar_ranking()
 
 
 async def run_manual_mmr_command(ctx, member, operation, amount):
