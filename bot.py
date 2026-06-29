@@ -30,7 +30,28 @@ import discord
 from discord.ext import commands
 
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+def get_env_value(*names, default=None):
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value.strip().strip('"').strip("'")
+    return default
+
+
+def normalize_github_repo(repo):
+    if not repo:
+        return repo
+
+    repo = repo.strip().strip('"').strip("'").replace("\\", "/")
+    repo = repo.removesuffix(".git")
+    for prefix in ("https://github.com/", "http://github.com/", "github.com/"):
+        if repo.lower().startswith(prefix):
+            repo = repo[len(prefix):]
+            break
+    return repo.strip("/")
+
+
+TOKEN = get_env_value("DISCORD_TOKEN", "discord_token")
 DATABASE_PATH = Path(__file__).with_name("mmr.sqlite3")
 RANKING_JSON_PATH = Path(__file__).with_name("ranking.json")
 VERTEX_DATA_JSON_PATH = Path(__file__).with_name("vertex-data.json")
@@ -38,9 +59,11 @@ VERTEX_DATA_JSON_PATH = Path(__file__).with_name("vertex-data.json")
 # ─────────────────────────────────────────
 #  CONFIG: subir ranking.json a GitHub
 # ─────────────────────────────────────────
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-GITHUB_REPO = os.getenv("GITHUB_REPO")  # ej: "vertexadmins-hub/Vertex-Ranking"
-GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
+GITHUB_TOKEN = get_env_value("GITHUB_TOKEN", "github_token")
+GITHUB_REPO = normalize_github_repo(
+    get_env_value("GITHUB_REPO", "github_repo")
+)  # ej: "vertexadmins-hub/Vertex-Ranking"
+GITHUB_BRANCH = get_env_value("GITHUB_BRANCH", "github_branch", default="main")
 GITHUB_FILE_PATH = "ranking.json"
 GITHUB_VERTEX_DATA_FILE_PATH = "vertex-data.json"
 REQUESTS_VERIFY = True if truststore is not None else certifi.where()
@@ -324,6 +347,81 @@ def format_web_sync_status(result, success_message):
         details = details[:897] + "..."
 
     return f"Local JSON updated, but GitHub upload failed ({details})."
+
+
+def explain_github_status_code(status_code):
+    if status_code == 401:
+        return "bad or expired GITHUB_TOKEN"
+    if status_code == 403:
+        return "GITHUB_TOKEN does not have enough permissions or rate limit was reached"
+    if status_code == 404:
+        return "GITHUB_REPO was not found or the token cannot access it"
+    return f"GitHub returned status {status_code}"
+
+
+def check_github_configuration():
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        missing = []
+        if not GITHUB_TOKEN:
+            missing.append("GITHUB_TOKEN")
+        if not GITHUB_REPO:
+            missing.append("GITHUB_REPO")
+        return {
+            "ok": False,
+            "repo": GITHUB_REPO or "not configured",
+            "branch": GITHUB_BRANCH,
+            "message": "Missing " + " and ".join(missing),
+        }
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+
+    try:
+        repo_response = requests.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}",
+            headers=headers,
+            timeout=10,
+            verify=REQUESTS_VERIFY,
+        )
+        if repo_response.status_code != 200:
+            return {
+                "ok": False,
+                "repo": GITHUB_REPO,
+                "branch": GITHUB_BRANCH,
+                "message": explain_github_status_code(repo_response.status_code),
+            }
+
+        file_response = requests.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}",
+            headers=headers,
+            params={"ref": GITHUB_BRANCH},
+            timeout=10,
+            verify=REQUESTS_VERIFY,
+        )
+        if file_response.status_code not in (200, 404):
+            return {
+                "ok": False,
+                "repo": GITHUB_REPO,
+                "branch": GITHUB_BRANCH,
+                "message": explain_github_status_code(file_response.status_code),
+            }
+
+    except requests.RequestException as error:
+        return {
+            "ok": False,
+            "repo": GITHUB_REPO,
+            "branch": GITHUB_BRANCH,
+            "message": f"network error: {error}",
+        }
+
+    return {
+        "ok": True,
+        "repo": GITHUB_REPO,
+        "branch": GITHUB_BRANCH,
+        "message": "GitHub token and repository are reachable",
+    }
 
 
 class ChannelRestrictionError(commands.CheckFailure):
@@ -1447,6 +1545,22 @@ async def syncweb(ctx):
             f"{format_web_sync_status(result, 'Web sync complete.')} "
             f"Players exported locally: **{result['count']}**."
         )
+
+
+@bot.command(name="githubstatus")
+@only_in_channel(STAFF_COMMANDS_CHANNEL_ID, STAFF_COMMANDS_CHANNEL_NAME)
+@commands.guild_only()
+@commands.has_guild_permissions(manage_guild=True)
+async def githubstatus(ctx):
+    status = check_github_configuration()
+    state = "OK" if status["ok"] else "FAILED"
+    await ctx.send(
+        "**GitHub sync status**\n"
+        f"Status: **{state}**\n"
+        f"Repo: `{status['repo']}`\n"
+        f"Branch: `{status['branch']}`\n"
+        f"Result: {status['message']}"
+    )
 
 
 @bot.command()
