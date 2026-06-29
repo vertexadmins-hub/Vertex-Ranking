@@ -1,0 +1,122 @@
+{
+  "generated_at": "2026-06-29T02:02:06+00:00",
+  "brand": "Vertex",
+  "official_games": [
+    "Counter-Strike 2",
+    "Valorant",
+    "Rainbow Six Siege",
+    "Rocket League",
+    "League of Legends",
+    "Fortnite"
+  ],
+  "users": [
+    {
+      "discord_id": "1061430836739702834",
+      "name": "Mzin",
+      "avatar": null,
+      "banner": null,
+      "registered_at": "2026-06-15 02:45:46",
+      "mmr": 494,
+      "peak_mmr": 3100,
+      "games": 3,
+      "wins": 0,
+      "losses": 3,
+      "winrate": 0.0,
+      "bio": "",
+      "socials": {},
+      "teams": [],
+      "achievements": []
+    },
+    {
+      "discord_id": "1408586194064904212",
+      "name": "frann",
+      "avatar": null,
+      "banner": null,
+      "registered_at": "2026-06-15 02:45:34",
+      "mmr": 479,
+      "peak_mmr": 479,
+      "games": 5,
+      "wins": 5,
+      "losses": 0,
+      "winrate": 100.0,
+      "bio": "",
+      "socials": {},
+      "teams": [],
+      "achievements": []
+    },
+    {
+      "discord_id": "1058614414959452170",
+      "name": "tino201126",
+      "avatar": null,
+      "banner": null,
+      "registered_at": "2026-06-15 04:08:38",
+      "mmr": 98,
+      "peak_mmr": 100,
+      "games": 3,
+      "wins": 1,
+      "losses": 2,
+      "winrate": 33.3,
+      "bio": "",
+      "socials": {},
+      "teams": [],
+      "achievements": []
+    },
+    {
+      "discord_id": "1313554886121619467",
+      "name": "tinoleich1029384756",
+      "avatar": null,
+      "banner": null,
+      "registered_at": "2026-06-15 02:46:25",
+      "mmr": 79,
+      "peak_mmr": 100,
+      "games": 1,
+      "wins": 0,
+      "losses": 1,
+      "winrate": 0.0,
+      "bio": "",
+      "socials": {},
+      "teams": [],
+      "achievements": []
+    }
+  ],
+  "ranking": [
+    {
+      "name": "Mzin",
+      "mmr": 494,
+      "wins": 0,
+      "losses": 3,
+      "winrate": 0.0
+    },
+    {
+      "name": "frann",
+      "mmr": 479,
+      "wins": 5,
+      "losses": 0,
+      "winrate": 100.0
+    },
+    {
+      "name": "tino201126",
+      "mmr": 98,
+      "wins": 1,
+      "losses": 2,
+      "winrate": 33.3
+    },
+    {
+      "name": "tinoleich1029384756",
+      "mmr": 79,
+      "wins": 0,
+      "losses": 1,
+      "winrate": 0.0
+    }
+  ],
+  "tournaments": [],
+  "events": [],
+  "active": {
+    "tournament": null,
+    "event": null
+  },
+  "discord": {
+    "invite_url": "https://discord.gg/tzg6fTYt",
+    "member_count": null
+  }
+}
