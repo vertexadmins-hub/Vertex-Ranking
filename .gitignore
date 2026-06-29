@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *.log
+*.bak
 mmr.sqlite3
 mmr.sqlite3-shm
 mmr.sqlite3-wal
+vertex-data.json
