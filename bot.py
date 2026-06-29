@@ -181,22 +181,36 @@ def exportar_ranking():
         with open(RANKING_JSON_PATH, "w", encoding="utf-8") as f:
             f.write(contenido)
 
-        ranking_uploaded = subir_ranking_a_github(contenido)
-        vertex_uploaded = exportar_datos_vertex()
+        ranking_upload = subir_ranking_a_github(contenido)
+        vertex_upload = exportar_datos_vertex()
         return {
             "ok": True,
             "count": len(data),
-            "ranking_uploaded": ranking_uploaded,
-            "vertex_uploaded": vertex_uploaded,
+            "ranking_uploaded": ranking_upload["ok"],
+            "vertex_uploaded": vertex_upload["ok"],
+            "ranking_upload": ranking_upload,
+            "vertex_upload": vertex_upload,
         }
 
     except Exception as e:
         logger.warning("Could not export ranking.json: %s", e)
+        ranking_upload = {
+            "ok": False,
+            "file": "ranking.json",
+            "error": f"local export failed: {e}",
+        }
+        vertex_upload = {
+            "ok": False,
+            "file": "vertex-data.json",
+            "error": "not attempted",
+        }
         return {
             "ok": False,
             "count": 0,
             "ranking_uploaded": False,
             "vertex_uploaded": False,
+            "ranking_upload": ranking_upload,
+            "vertex_upload": vertex_upload,
         }
 
 
@@ -205,11 +219,12 @@ def exportar_ranking():
 # ─────────────────────────────────────────
 def subir_archivo_a_github(github_file_path: str, contenido: str, message: str):
     if not GITHUB_TOKEN or not GITHUB_REPO:
+        error = "missing GITHUB_TOKEN or GITHUB_REPO"
         logger.warning(
             "GITHUB_TOKEN o GITHUB_REPO no configurados; no se sube %s a GitHub",
             github_file_path,
         )
-        return False
+        return {"ok": False, "file": github_file_path, "error": error}
 
     api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{github_file_path}"
     headers = {
@@ -231,11 +246,12 @@ def subir_archivo_a_github(github_file_path: str, contenido: str, message: str):
         if get_resp.status_code == 200:
             sha = get_resp.json().get("sha")
         elif get_resp.status_code != 404:
+            error = f"GitHub read failed with status {get_resp.status_code}"
             logger.warning(
                 "No se pudo obtener %s de GitHub (status %s): %s",
                 github_file_path, get_resp.status_code, get_resp.text,
             )
-            return False
+            return {"ok": False, "file": github_file_path, "error": error}
 
         contenido_b64 = base64.b64encode(contenido.encode("utf-8")).decode("utf-8")
 
@@ -256,22 +272,23 @@ def subir_archivo_a_github(github_file_path: str, contenido: str, message: str):
         )
 
         if put_resp.status_code not in (200, 201):
+            error = f"GitHub upload failed with status {put_resp.status_code}"
             logger.warning(
                 "No se pudo subir %s a GitHub (status %s): %s",
                 github_file_path, put_resp.status_code, put_resp.text,
             )
-            return False
+            return {"ok": False, "file": github_file_path, "error": error}
         else:
             logger.info(
                 "%s actualizado en GitHub (%s).",
                 github_file_path,
                 GITHUB_BRANCH,
             )
-            return True
+            return {"ok": True, "file": github_file_path, "error": None}
 
     except requests.RequestException as e:
         logger.warning("Error de red al subir %s a GitHub: %s", github_file_path, e)
-        return False
+        return {"ok": False, "file": github_file_path, "error": f"network error: {e}"}
 
 
 def subir_ranking_a_github(contenido: str):
@@ -284,6 +301,29 @@ def subir_datos_vertex_a_github(contenido: str):
         contenido,
         "update vertex-data.json",
     )
+
+
+def format_web_sync_status(result, success_message):
+    if not result["ok"]:
+        return "Web sync failed while generating local JSON files."
+
+    failed_uploads = [
+        result["ranking_upload"],
+        result["vertex_upload"],
+    ]
+    failed_uploads = [upload for upload in failed_uploads if not upload["ok"]]
+
+    if not failed_uploads:
+        return success_message
+
+    details = "; ".join(
+        f"{upload['file']}: {upload['error']}"
+        for upload in failed_uploads
+    )
+    if len(details) > 900:
+        details = details[:897] + "..."
+
+    return f"Local JSON updated, but GitHub upload failed ({details})."
 
 
 class ChannelRestrictionError(commands.CheckFailure):
@@ -1315,7 +1355,11 @@ def exportar_datos_vertex():
         return subir_datos_vertex_a_github(contenido)
     except Exception as error:
         logger.warning("Could not export vertex-data.json: %s", error)
-        return False
+        return {
+            "ok": False,
+            "file": "vertex-data.json",
+            "error": f"local export failed: {error}",
+        }
 
 
 def format_entity_summary(entity):
@@ -1390,7 +1434,7 @@ async def ping(ctx):
 async def syncweb(ctx):
     result = exportar_ranking()
     if not result["ok"]:
-        await ctx.send("Web sync failed. Check the bot console logs.")
+        await ctx.send(format_web_sync_status(result, "Web sync complete."))
         return
 
     if result["ranking_uploaded"] and result["vertex_uploaded"]:
@@ -1400,8 +1444,8 @@ async def syncweb(ctx):
         )
     else:
         await ctx.send(
-            "Local JSON files were regenerated, but GitHub upload failed. "
-            "Check `GITHUB_TOKEN`, `GITHUB_REPO`, and the bot console logs."
+            f"{format_web_sync_status(result, 'Web sync complete.')} "
+            f"Players exported locally: **{result['count']}**."
         )
 
 
@@ -1414,13 +1458,7 @@ async def register(ctx):
     created = create_user(ctx.author)
     await assign_mmr_role(ctx.author)
     result = exportar_ranking()
-
-    if result["ok"] and result["ranking_uploaded"] and result["vertex_uploaded"]:
-        sync_status = "Web ranking updated."
-    elif result["ok"]:
-        sync_status = "Local ranking updated, but GitHub upload failed. Check the bot console logs."
-    else:
-        sync_status = "Web sync failed. Check the bot console logs."
+    sync_status = format_web_sync_status(result, "Web ranking updated.")
 
     if created:
         await ctx.send(
@@ -1530,12 +1568,7 @@ async def resetseason(ctx):
     player_count = reset_season(ctx.author, idempotency_key=discord_idempotency_key("resetseason", ctx))
     removed_roles = await clear_all_mmr_roles(ctx.guild)
     result = exportar_ranking()
-
-    sync_status = "Web sync complete."
-    if not result["ok"]:
-        sync_status = "Web sync failed. Check the bot console logs."
-    elif not (result["ranking_uploaded"] and result["vertex_uploaded"]):
-        sync_status = "Local JSON files were regenerated, but GitHub upload failed."
+    sync_status = format_web_sync_status(result, "Web sync complete.")
 
     await ctx.send(
         f"Season reset complete. **{player_count} registered players** were removed. "
