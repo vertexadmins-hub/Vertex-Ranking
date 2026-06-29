@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-29T02:43:16+00:00",
+  "generated_at": "2026-06-29T02:43:26+00:00",
   "brand": "Vertex",
   "official_games": [
     "Counter-Strike 2",
@@ -9,58 +9,8 @@
     "League of Legends",
     "Fortnite"
   ],
-  "users": [
-    {
-      "discord_id": "1408586194064904212",
-      "name": "frann",
-      "avatar": null,
-      "banner": null,
-      "registered_at": "2026-06-29 02:30:03",
-      "mmr": 100,
-      "peak_mmr": 100,
-      "games": 0,
-      "wins": 0,
-      "losses": 0,
-      "winrate": 0.0,
-      "bio": "",
-      "socials": {},
-      "teams": [],
-      "achievements": []
-    },
-    {
-      "discord_id": "1061430836739702834",
-      "name": "Mzin",
-      "avatar": null,
-      "banner": null,
-      "registered_at": "2026-06-29 02:36:41",
-      "mmr": 100,
-      "peak_mmr": 100,
-      "games": 0,
-      "wins": 0,
-      "losses": 0,
-      "winrate": 0.0,
-      "bio": "",
-      "socials": {},
-      "teams": [],
-      "achievements": []
-    }
-  ],
-  "ranking": [
-    {
-      "name": "frann",
-      "mmr": 100,
-      "wins": 0,
-      "losses": 0,
-      "winrate": 0.0
-    },
-    {
-      "name": "Mzin",
-      "mmr": 100,
-      "wins": 0,
-      "losses": 0,
-      "winrate": 0.0
-    }
-  ],
+  "users": [],
+  "ranking": [],
   "tournaments": [],
   "events": [],
   "active": {
