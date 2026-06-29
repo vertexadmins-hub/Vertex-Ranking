@@ -1412,12 +1412,23 @@ async def register(ctx):
         await ctx.send("Bots cannot register.")
         return
     created = create_user(ctx.author)
-    if created:
-        await ctx.send(f"{ctx.author.mention}, you registered with **{INITIAL_MMR} MMR**.")
-    else:
-        await ctx.send(f"{ctx.author.mention}, you are already registered.")
     await assign_mmr_role(ctx.author)
-    exportar_ranking()
+    result = exportar_ranking()
+
+    if result["ok"] and result["ranking_uploaded"] and result["vertex_uploaded"]:
+        sync_status = "Web ranking updated."
+    elif result["ok"]:
+        sync_status = "Local ranking updated, but GitHub upload failed. Check the bot console logs."
+    else:
+        sync_status = "Web sync failed. Check the bot console logs."
+
+    if created:
+        await ctx.send(
+            f"{ctx.author.mention}, you registered with **{INITIAL_MMR} MMR**. "
+            f"{sync_status}"
+        )
+    else:
+        await ctx.send(f"{ctx.author.mention}, you are already registered. {sync_status}")
 
 
 @bot.command()
