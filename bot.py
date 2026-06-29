@@ -688,6 +688,35 @@ async def sync_all_mmr_roles(guild):
     return updated
 
 
+async def clear_all_mmr_roles(guild):
+    if guild is None:
+        return 0
+
+    roles = [
+        guild.get_role(role_id)
+        for role_id in MMR_ROLE_IDS
+        if role_id
+    ]
+    roles = [role for role in roles if role is not None]
+    if not roles:
+        return 0
+
+    removed = 0
+    for role in roles:
+        for member in list(role.members):
+            try:
+                await member.remove_roles(role, reason="Season reset cleared MMR registration")
+                removed += 1
+            except (discord.Forbidden, discord.HTTPException) as error:
+                logger.warning(
+                    "Could not remove MMR role %s from user %s: %s",
+                    role.id,
+                    member.id,
+                    error,
+                )
+    return removed
+
+
 def create_user(user):
     with get_connection() as connection:
         cursor = connection.execute(
@@ -960,15 +989,21 @@ def reset_season(actor, idempotency_key=None):
             if duplicate is not None:
                 raise DuplicateRecordError("This season reset was already applied.")
 
-        users = connection.execute("SELECT user_id, username, current_mmr FROM users").fetchall()
+        users = connection.execute("SELECT user_id FROM users").fetchall()
+        player_count = len(users)
 
-        # A season reset starts a clean competitive season. Admin audit logs stay,
-        # but match records and match-based MMR changes are removed.
-        connection.execute("DELETE FROM mmr_changes WHERE match_id IS NOT NULL")
+        # A full season reset removes every registered player so everybody must
+        # register again. Admin audit logs stay, but user references are cleared.
+        connection.execute("DELETE FROM mmr_changes")
         connection.execute("DELETE FROM match_participants")
         connection.execute("DELETE FROM match_history")
+        connection.execute("DELETE FROM competitive_participants")
+        connection.execute("UPDATE competitive_entities SET created_by = NULL")
+        connection.execute("UPDATE admin_actions SET target_id = NULL WHERE target_id IS NOT NULL")
         if table_exists(connection, "matches"):
             connection.execute("DELETE FROM matches")
+        if table_exists(connection, "players"):
+            connection.execute("DELETE FROM players")
 
         connection.execute(
             """
@@ -976,34 +1011,12 @@ def reset_season(actor, idempotency_key=None):
                 amount_changed, reason, idempotency_key)
             VALUES (?, ?, 'resetseason', 'admin', 0, ?, ?)
             """,
-            (action_id, actor.id, "Season reset; match history cleared.", idempotency_key),
+            (action_id, actor.id, "Season reset; all player registrations cleared.", idempotency_key),
         )
 
-        for user in users:
-            amount_changed = INITIAL_MMR - user["current_mmr"]
-            set_user_mmr(connection, user["user_id"], user["username"], INITIAL_MMR)
-            connection.execute(
-                """
-                UPDATE users
-                SET games_played = 0, wins = 0, losses = 0, winrate = 0, updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ?
-                """,
-                (user["user_id"],),
-            )
-            save_mmr_change(connection, user_id=user["user_id"], admin_action_id=action_id,
-                change_type="admin", previous_mmr=user["current_mmr"],
-                amount_changed=amount_changed, new_mmr=INITIAL_MMR)
+        connection.execute("DELETE FROM users")
 
-        if table_exists(connection, "players"):
-            connection.execute(
-                """
-                UPDATE players
-                SET mmr = ?, wins = 0, losses = 0
-                """,
-                (INITIAL_MMR,),
-            )
-
-        return len(users)
+        return player_count
 
 
 def utc_now_iso():
@@ -1504,7 +1517,7 @@ async def victoria(ctx, winner: discord.Member, loser: discord.Member):
 @commands.has_guild_permissions(manage_guild=True)
 async def resetseason(ctx):
     player_count = reset_season(ctx.author, idempotency_key=discord_idempotency_key("resetseason", ctx))
-    await sync_all_mmr_roles(ctx.guild)
+    removed_roles = await clear_all_mmr_roles(ctx.guild)
     result = exportar_ranking()
 
     sync_status = "Web sync complete."
@@ -1514,8 +1527,9 @@ async def resetseason(ctx):
         sync_status = "Local JSON files were regenerated, but GitHub upload failed."
 
     await ctx.send(
-        f"Season reset complete. **{player_count} players** were reset to "
-        f"**{INITIAL_MMR} MMR** with 0 wins and 0 losses. Match history was cleared. "
+        f"Season reset complete. **{player_count} registered players** were removed. "
+        "The ranking is now empty and everyone must use `!register` again. "
+        f"MMR roles removed: **{removed_roles}**. "
         f"{sync_status}"
     )
 
